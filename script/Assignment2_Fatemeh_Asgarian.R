@@ -1,9 +1,3 @@
-## Introduction ------
-# Pinaceae (Pine family) is the largest family of conifers globally, making up 11 genera (Ran et al., 2018). There is a lot of ecological and economic importance in these trees and so identifying the species and conducting phylogenetic analysis is vital for their conservation. Morphological studies are often not sufficient for correctly identifying members of the Pinaceae family (Ran et al., 2018). This increases the importance of using genetic markers and building classifiers, which is the objective of this assignment.
-# The genes maturase K (matK) and ribulose-1,5-biphosphate carboxylase (rbcL) are both chloroplast genes often used as biomarkers for species identification of plants (Yong et al., 2024) I consequently decided to build a classifier to classify matK and rbcL for the Pinaceae family. For this assignment, I plan to use Random Forest for machine learning and classification using nucleotide proportions and repeat it using dinucleotide frequencies to compare the impact. I will then compare Random Forest to Support Vector Machine (SVM), another classification method, using the data with nucleotide proportions. I hypothesise that both methods will be equally accurate with classification because they are both popular for handling large datasets with many features and I further hypothesise that neither will be 100% successful due to both genes being chloroplast DNA.
-
-
-
 ## Packages used ------
 library(tidyverse)
 conflicted::conflicts_prefer(dplyr::filter())
@@ -20,31 +14,78 @@ library(ggplot2)
 library(e1071)
 library(randomForest)
 library(styler)
+# install.packages("progress")
+library(progress)
+# install.packages("caret")
+library(caret)
+# install.packages("stringr")
+library(stringr)
 
-## CODE Section 1 - DATA PREPARATION ----
 
-# I am retrieving my matK sequences from NCBI and I wish to know how long the sequence lengths on my dataset generally are so I can decide on what sequence length range is suitable for me to filter my data - I begin by doing a search and then fetching my data as a FASTA file
 
-# PinaceaematK <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND matK[GENE]", use_history = T)
-# PinaceaematK #We get 2714 hits on October 23
-# matKmaxHits <- PinaceaematK$count
-# Pinaceae_matK <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND matK[GENE]", retmax = matKmaxHits, use_history = T)
-# Pinaceae_matK
-# length(Pinaceae_matK$ids)
-# Pinaceae_matK$web_history
+##1. CODE Section 1 - DATA PREPARATION ----
 
-# for (seq_start in seq(1, matKmaxHits, 500)) {
-#   matK_fetch <- entrez_fetch(
-#     db = "nuccore", web_history = Pinaceae_matK$web_history,
-#     rettype = "fasta", retmax = 500, retstart = seq_start - 1
-#   )
-#   cat(matK_fetch, file = "../data/matK_fetch.fasta", append = TRUE)
-#   cat(seq_start + 499, "sequences downloaded\r")
-# }
+# Define the download_sequences function
+download_sequences <- function(db, organism, gene, output_file, batch_size = 500) {
+  library(rentrez)
+  library(progress)  # Load progress bar library
+  
+  # Step 1: Perform the search and set up web history
+  search_term <- paste0(organism, "[ORGN] AND ", gene, "[GENE]")
+  search_result <- entrez_search(db = db, term = search_term, use_history = TRUE)
+  total_hits <- search_result$count
+  message("Total sequences found: ", total_hits)
+  
+  # Set up the progress bar
+  pb <- progress_bar$new(
+    format = "  Downloading [:bar] :percent in :elapsed",
+    total = ceiling(total_hits / batch_size),
+    clear = FALSE,
+    width = 60
+  )
+  
+  # Step 2: Loop through results in batches and write to the output file
+  for (seq_start in seq(1, total_hits, by = batch_size)) {
+    fetched_sequences <- entrez_fetch(
+      db = db,
+      web_history = search_result$web_history,
+      rettype = "fasta",
+      retmax = batch_size,
+      retstart = seq_start - 1
+    )
+    
+    # Write each batch to the file
+    cat(fetched_sequences, file = output_file, append = TRUE)
+    
+    # Update the progress bar
+    pb$tick()
+  }
+  
+  message("\nDownload complete! Sequences saved to ", output_file)
+}
+
+# Running the download_sequences function for the matK gene.
+download_sequences(
+  db = "nuccore",
+  organism = "Pinaceae",
+  gene = "matK",
+  output_file = "../data/new_matK_fetch.fasta"
+)
+
+# Running the download_sequences function for the rbcL gene.
+download_sequences(
+  db = "nuccore",
+  organism = "Pinaceae",
+  gene = "rbcL",
+  output_file = "../data/new_rbcL_fetch.fasta"
+)
+
+
+
 
 # The next step I take is create a boxplot of the sequence length of all the sequences below 5000 nucleotides from my retrieved data because I am looking for matK genes, not whole chloroplast genomes
 
-BoxplotFastaM <- "../data/matK_fetch.fasta"
+BoxplotFastaM <- "../data/new_matK_fetch.fasta"
 SequencesBoxplotM <- readDNAStringSet(BoxplotFastaM)
 SequenceLengthM <- width(SequencesBoxplotM)
 dfSequenceLengthM <- data.frame(length = SequenceLengthM)
@@ -59,30 +100,31 @@ ggplot(Filtered_dfSequenceLengthM, aes(y = length)) +
   ) +
   theme_minimal()
 
+
 # Judging by our boxplot, a 700-1700bp range seems to be a safe bet to obtain reasonable sequences of appropriate length - we redo our search and then fetch the sequence as a FASTA file
 
-# TrimmedPinaceaematK <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND matK[GENE] AND 700:1700[SLEN]", use_history = T)
-# TrimmedPinaceaematK #We get 1704 hits on October 23
-# TrimmedmatKmaxHits <- TrimmedPinaceaematK$count
-# Trimmed_Pinaceae_matK <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND matK[GENE] AND 700:1700[SLEN]", retmax = TrimmedmatKmaxHits, use_history = T)
-# length(Trimmed_Pinaceae_matK$ids)
-# Trimmed_Pinaceae_matK$web_history
+TrimmedPinaceaematK <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND matK[GENE] AND 700:1700[SLEN]", use_history = T)
+TrimmedPinaceaematK #We get 1704 hits on October 23
+TrimmedmatKmaxHits <- TrimmedPinaceaematK$count
+Trimmed_Pinaceae_matK <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND matK[GENE] AND 700:1700[SLEN]", retmax = TrimmedmatKmaxHits, use_history = T)
+length(Trimmed_Pinaceae_matK$ids)
+Trimmed_Pinaceae_matK$web_history
 
-# for (seq_start in seq(1, TrimmedmatKmaxHits, 500)) {
-#   Trimmed_matK_fetch <- entrez_fetch(
-#     db = "nuccore", web_history = Trimmed_Pinaceae_matK$web_history,
-#     rettype = "fasta", retmax = 500, retstart = seq_start - 1
-#   )
-#   cat(Trimmed_matK_fetch, file = "../data/Trimmed_matK_fetch.fasta", append = TRUE)
-#   cat(seq_start + 499, "sequences downloaded\r")
-# }
+for (seq_start in seq(1, TrimmedmatKmaxHits, 500)) {
+  Trimmed_matK_fetch <- entrez_fetch(
+    db = "nuccore", web_history = Trimmed_Pinaceae_matK$web_history,
+    rettype = "fasta", retmax = 500, retstart = seq_start - 1
+  )
+  cat(Trimmed_matK_fetch, file = "../data/Trimmed_matK_fetch.fasta", append = TRUE)
+  cat(seq_start + 499, "sequences downloaded\r")
+}
 
 # We can observe our retrieved data to see our data type and get a preview of the sequences
-# class(Trimmed_matK_fetch)
-# head(Trimmed_matK_fetch)
+class(Trimmed_matK_fetch)
+head(Trimmed_matK_fetch)
 
 # We can write this into our working directory if we wish to
-# write(Trimmed_matK_fetch, "Trimmed_matK_fetch.fasta", sep = "\n")
+write(Trimmed_matK_fetch, "Trimmed_matK_fetch.fasta", sep = "\n")
 
 # The data must be written again in DNAStringSet format using readDNAStringSet so we can use the data to create a data frame with our titles and sequences - we can check to see if the data is in the right format with the right organisms and number of sequences
 
@@ -103,57 +145,14 @@ dfmatK$Gene <- "matK"
 # The columns are rearranged increase the ease of viewing the data
 dfmatK <- dfmatK[, c("ID", "Title", "Gene", "Species_Name", "Sequence")]
 # View(dfmatK)
-
-# Next, I wish to "clean" my obtained sequences, meaning I wish to remove any potential sequences starting or ending with Ns and those with trailing gaps because we are not looking for aligned sequences but rather available nucleotides and k-mers in our code. Those sequences with internal Ns that exceed 2% of the code are removed as well - 2% is used as the cutoff point here to select for high quality sequences and exclude ambiguous sequences
-
-dfmatKCleaned <- dfmatK %>%
-  filter(!is.na(Sequence)) %>%
-  mutate(Sequence2 = Sequence) %>%
-  mutate(Sequence2 = str_remove(Sequence2, "^[-N]+")) %>%
-  mutate(Sequence2 = str_remove(Sequence2, "[-N]+$")) %>%
-  mutate(Sequence2 = str_remove_all(Sequence2, "-+")) %>%
-  filter(str_count(Sequence2, "N") <= (0.02 * str_count(Sequence2)))
-# view(dfmatKCleaned)
-summary(nchar(dfmatKCleaned$Sequence2))
-
-# We can compare our original sequence data with our new sequence data after cleaning it
-dfmatKCleanedComparison <- cbind(dfmatKCleaned$Sequence, dfmatKCleaned$Sequence2)
-view(dfmatKCleanedComparison)
-
-# I wish to confirm that the dataset I have prepared is correct so I count the unique number of species in my data
-length(unique(dfmatKCleaned$Species_Name))
-
-# Creating a subset of the data by grouping it by species name and sampling only one of each to count rows
-dfmatK_Subset <- dfmatK %>%
-  group_by(Species_Name) %>%
-  sample_n(1)
-# The code above should give us 234 species if our dataset is prepared correctly, we confirm this by ensuring the code below gives us "TRUE"
-all.equal(length(unique(dfmatKCleaned$Species_Name)), nrow(dfmatK_Subset))
+# Cleaning will happen downstream.
 
 
-# This procedure must be repeated for the second gene being observed and predicted in the code, the rbcL gene - we first identify the number of hits through an NCBI search and use it to fetch our data in FASTA format
 
-# PinaceaerbcL <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND rbcL[GENE]", use_history = T)
-# PinaceaerbcL # We get 2910 hits on October 23
-# rbcLmaxHits <- PinaceaerbcL$count
-# Pinaceae_rbcL <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND rbcL[GENE]", retmax = rbcLmaxHits, use_history = T)
-# Pinaceae_rbcL
-# length(Pinaceae_rbcL$ids)
-# Pinaceae_rbcL$web_history
-
-
-# for (seq_start in seq(1, rbcLmaxHits, 500)) {
-#   rbcL_fetch <- entrez_fetch(
-#     db = "nuccore", web_history = Pinaceae_rbcL$web_history,
-#     rettype = "fasta", retmax = 500, retstart = seq_start - 1
-#   )
-#   cat(rbcL_fetch, file = "../data/rbcL_fetch.fasta", append = TRUE)
-#   cat(seq_start + 499, "sequences downloaded\r")
-# }
 
 # The next step I take is create a boxplot of the sequence length of all the sequences below 5000 nucleotides from my retrieved data because I am looking for rbcL genes, not whole chloroplast genomes
 
-BoxplotFastaR <- "../data/rbcL_fetch.fasta"
+BoxplotFastaR <- "../data/new_rbcL_fetch.fasta"
 SequencesBoxplotR <- readDNAStringSet(BoxplotFastaR)
 SequenceLengthR <- width(SequencesBoxplotR)
 dfSequenceLengthR <- data.frame(length = SequenceLengthR)
@@ -168,32 +167,33 @@ ggplot(Filtered_dfSequenceLengthR, aes(y = length)) +
   ) +
   theme_minimal()
 
+
 # We wish to search for sequences of rbcL within the 500-1500 range after looking at our boxplot as a safe bet of obtaining sequences of reasonable length and then we fetch the data from NCBI in FASTA format
 
-# TrimmedPinaceaerbcL <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND rbcL[GENE] AND 500:1500[SLEN]", use_history = T)
-# TrimmedPinaceaerbcL # We get 2001 hits on October 23
-# TrimmedrbcLmaxHits <- TrimmedPinaceaerbcL$count
-# Trimmed_Pinaceae_rbcL <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND rbcL[GENE] AND 500:1500[SLEN]", retmax = TrimmedrbcLmaxHits, use_history = T)
-# Trimmed_Pinaceae_rbcL
-# length(Trimmed_Pinaceae_rbcL$ids)
-# Trimmed_Pinaceae_rbcL$web_history
+TrimmedPinaceaerbcL <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND rbcL[GENE] AND 500:1500[SLEN]", use_history = T)
+TrimmedPinaceaerbcL # We get 2001 hits on October 23
+TrimmedrbcLmaxHits <- TrimmedPinaceaerbcL$count
+Trimmed_Pinaceae_rbcL <- entrez_search(db = "nuccore", term = "Pinaceae[ORGN] AND rbcL[GENE] AND 500:1500[SLEN]", retmax = TrimmedrbcLmaxHits, use_history = T)
+Trimmed_Pinaceae_rbcL
+length(Trimmed_Pinaceae_rbcL$ids)
+Trimmed_Pinaceae_rbcL$web_history
 
 
-# for (seq_start in seq(1, TrimmedrbcLmaxHits, 500)) {
-#   Trimmed_rbcL_fetch <- entrez_fetch(
-#     db = "nuccore", web_history = Trimmed_Pinaceae_rbcL$web_history,
-#     rettype = "fasta", retmax = 500, retstart = seq_start - 1
-#   )
-#   cat(Trimmed_rbcL_fetch, file = "../data/Trimmed_rbcL_fetch.fasta", append = TRUE)
-#   cat(seq_start + 499, "sequences downloaded\r")
-# }
+for (seq_start in seq(1, TrimmedrbcLmaxHits, 500)) {
+  Trimmed_rbcL_fetch <- entrez_fetch(
+    db = "nuccore", web_history = Trimmed_Pinaceae_rbcL$web_history,
+    rettype = "fasta", retmax = 500, retstart = seq_start - 1
+  )
+  cat(Trimmed_rbcL_fetch, file = "../data/Trimmed_rbcL_fetch.fasta", append = TRUE)
+  cat(seq_start + 499, "sequences downloaded\r")
+}
 
 # We can observe our retrieved data to see our data type and get a preview of the sequences
-# class(Trimmed_rbcL_fetch)
-# head(Trimmed_rbcL_fetch)
+class(Trimmed_rbcL_fetch)
+head(Trimmed_rbcL_fetch)
 
 # We can write this into our working directory if we wish to
-# write(Trimmed_rbcL_fetch, "Trimmed_rbcL_fetch.fasta", sep = "\n")
+write(Trimmed_rbcL_fetch, "Trimmed_rbcL_fetch.fasta", sep = "\n")
 
 # The data must be written again in DNAStringSet format using readDNAStringSet so we can use the data to create a data frame with our titles and sequences - we can check to see if the data is in the right format with the right organisms and number of sequences
 Final_rbcL <- "../data/Trimmed_rbcL_fetch.fasta"
@@ -214,46 +214,67 @@ dfrbcL$Gene <- "rbcL"
 dfrbcL <- dfrbcL[, c("ID", "Title", "Gene", "Species_Name", "Sequence")]
 # View(dfrbcL)
 
-# I "clean" the rbcL data with the same criteria I applied to the matK data
-dfrbcLCleaned <- dfrbcL %>%
-  filter(!is.na(Sequence)) %>%
-  mutate(Sequence2 = Sequence) %>%
-  mutate(Sequence2 = str_remove(Sequence2, "^[-N]+")) %>%
-  mutate(Sequence2 = str_remove(Sequence2, "[-N]+$")) %>%
-  mutate(Sequence2 = str_remove_all(Sequence2, "-+")) %>%
-  filter(str_count(Sequence2, "N") <= (0.02 * str_count(Sequence2)))
-# view(dfrbcLCleaned)
-summary(nchar(dfrbcLCleaned$Sequence2))
 
-# We can compare our original sequence data with our new sequence data after cleaning it to look for differences
-dfrbcLCleanedComparison <- cbind(dfrbcLCleaned$Sequence, dfrbcLCleaned$Sequence2)
-view(dfrbcLCleanedComparison)
 
-# I wish to confirm that the dataset I have prepared is correct by looking at the unique species and creating a subset of my data with contains one of each species and checking to see if the numbers of species match
-length(unique(dfrbcLCleaned$Species_Name))
-dfrbcL_Subset <- dfrbcL %>%
-  group_by(Species_Name) %>%
-  sample_n(1)
-# The code for the subset above should give us 246 species, we confirm this by checking if the following code gives us "TRUE"
-all.equal(length(unique(dfrbcLCleaned$Species_Name)), nrow(dfrbcL_Subset))
+# Define the clean_sequences function.
+clean_sequences <- function(data_frame, sequence_column) {
+  library(stringr)
+  library(dplyr)
+  
+  # Summary before cleaning
+  cat("********** BEFORE CLEANING **********\n")
+  cat("Number of sequences:", nrow(data_frame), "\n")
+  total_Ns_before <- sum(str_count(data_frame[[sequence_column]], "N"))
+  cat("Total number of Ns:", total_Ns_before, "\n")
+  
+  # Clean the sequences
+  cleaned_data <- data_frame %>%
+    filter(!is.na(!!sym(sequence_column))) %>%  # Remove NA sequences
+    mutate(Sequence2 = !!sym(sequence_column)) %>%
+    mutate(Sequence2 = str_remove(Sequence2, "^N+")) %>%  # Remove leading Ns
+    mutate(Sequence2 = str_remove(Sequence2, "N+$")) %>%  # Remove trailing Ns
+    filter(str_count(Sequence2, "N") <= (0.02 * str_count(Sequence2)))  # Keep sequences with <= 2% Ns
+  
+  # Summary after cleaning
+  cat("\n********** AFTER CLEANING **********\n")
+  cat("Number of sequences after cleaning:", nrow(cleaned_data), "\n")
+  total_Ns_after <- sum(str_count(cleaned_data$Sequence2, "N"))
+  cat("Total number of Ns after cleaning:", total_Ns_after, "\n")
+  sequences_removed <- nrow(data_frame) - nrow(cleaned_data)
+  cat("Number of sequences removed during cleaning:", sequences_removed, "\n")
+  cat("Summary of sequence lengths after cleaning:\n")
+  summary_after <- summary(nchar(cleaned_data$Sequence2))
+  print(summary_after)
+  
+  return(cleaned_data)
+}
 
-# Combining our two datasets is important for the preparation of the classifier
-dfCombined <- rbind(dfrbcLCleaned, dfmatKCleaned)
-view(dfCombined)
 
-# We can then run a few checks to see if the data was combined correctly
+# Cleaning the matK sequences using the new function.
+new_dfmatKCleaned <- clean_sequences(dfmatK, "Sequence")
+
+# Cleaning the rbcL sequences using the new function.
+new_dfrbcLCleaned <- clean_sequences(dfrbcL, "Sequence")
+
+
+# Combining the cleaned datasets
+dfCombined <- rbind(new_dfrbcLCleaned, new_dfmatKCleaned)
+
+# We can then run a few checks to see if the data was combined correctly. As seen previously in the summaries, the mean for rbcL is 845.7 vs 1172 for matK.
 dim(dfCombined)
 unique(dfCombined$Gene)
 sum(is.na(dfCombined$Sequence2))
-summary(str_count(dfCombined$Sequence2[dfCombined$Gene == "rbcL"]))
-summary(str_count(dfCombined$Sequence2[dfCombined$Gene == "matK"]))
-
-# Mean for rbcL is 845.7 vs 1172 for matK
 
 # I will then remove the files that I do not need downstream
-rm(dfrbcLCleanedComparison, dfmatKCleanedComparison)
+rm(new_dfrbcLCleaned, new_dfmatKCleaned)
 
-## CODE Section 2 - DATA ANALYSIS ----
+
+
+
+
+
+
+##2. CODE Section 2 - DATA ANALYSIS ----
 
 # We first need our sequence data in DNAStringSet format for our analysis
 dfCombined <- as.data.frame(dfCombined)
@@ -302,6 +323,16 @@ dfTraining <- dfCombined %>%
 
 # We check to see if the correct number of sample size is available for both genes, expecting 1267
 table(dfTraining$Gene)
+
+
+
+
+
+
+
+
+
+## Random Forest Classifier ------
 
 # We then build a classifier to separate the two genes using the columns assigned for our nucleotide proportions as the predictors and the genes as our response variable
 Gene_Classifier <- randomForest::randomForest(x = dfTraining[, 11:14], y = as.factor(dfTraining$Gene), ntree = 500, importance = TRUE)
@@ -354,72 +385,121 @@ table(Observed = dfValidation$Gene, Predicted = predictValidation_2mers)
 
 # It is true! 425/425 of our sequences are classified correctly for both matK and rbcL
 
-# Moving on, to compare our randomForest analysis with SVM, we need to to run our data on SVM so we convert our gene column into a factor from a character
-dfTraining$Gene <- as.factor(dfTraining$Gene)
-class(dfTraining$Gene)
 
-# We then must use our nucleotide proportions as predictors once again
-SVM_Combined <- svm(
+
+
+
+
+
+
+
+
+
+## Support Vector Machine Classifier ------
+
+# Define the training data for SVM (1-mer features).
+train_data_1mer <- dfTraining[, c("Gene", "Aprop", "Tprop", "Gprop", "Cprop")]
+train_data_1mer$Gene <- as.factor(train_data_1mer$Gene)
+
+# Define the validation data for SVM (1-mer features).
+validation_data_1mer <- dfValidation[, c("Gene", "Aprop", "Tprop", "Gprop", "Cprop")]
+validation_data_1mer$Gene <- as.factor(validation_data_1mer$Gene)
+
+# Train an SVM model using caret (train()) with a radial kernel for 1-mer features.
+set.seed(123)  # Setting a seed for reproducibility.
+svm_1mer_caret <- train(
   Gene ~ Aprop + Tprop + Gprop + Cprop,
-  data = dfTraining,
-  kernel = "radial",
-  cost = 1,
-  gamma = 0.1
+  data = train_data_1mer,
+  method = "svmRadial",  # Radial kernel for SVM.
+  trControl = trainControl(method = "cv", number = 10),  # 10-fold cross-validation.
+  preProcess = c("center", "scale")  # Standardize the data.
 )
-summary(SVM_Combined)
 
-# We use the SVM dataset on our validation dataset after checking to see if all 850 sequences were used
-SVM_PredictValidation <- predict(SVM_Combined, dfValidation)
-SVM_PredictValidation
-class(SVM_PredictValidation)
-length(SVM_PredictValidation)
-table(Observed = dfValidation$Gene, Predicted = SVM_PredictValidation)
+# Use the trained model to predict the validation dataset (1-mer).
+svm_1mer_predictions_caret <- predict(svm_1mer_caret, validation_data_1mer)
+svm_1mer_accuracy_caret <- sum(svm_1mer_predictions_caret == validation_data_1mer$Gene) / nrow(validation_data_1mer)
+print(paste("SVM Accuracy with 1-mer (train()):", svm_1mer_accuracy_caret))
 
-# For SVM validation data, we observe that our matK sequences were all correctly classified but 20/425 of the rbcL sequences were misclassified as matK genes - I believed this to be something worth exploring personally. I decided to observe the G proportions (most significant in our data) of the misclassified rbcL sequences relative to other sequences that were correctly classified.
-# To single out the 20 misclassified rbcL genes and look further into them, we create a separate column
-dfValidation$Predicted_Gene <- SVM_PredictValidation
+# Define the training data for SVM (2-mer features).
+train_data_2mer <- dfTraining[, c("Gene", "AA", "AC", "AG", "AT", "CA", "CC", "CG", "CT", "GA", "GC", "GG", "GT", "TA", "TC", "TG", "TT")]
+train_data_2mer$Gene <- as.factor(train_data_2mer$Gene)
 
-# We then filter the data to identify the 20 rows where the gene is rbcL but was predicted as matK
-Misclassified_rbcL <- dfValidation %>%
-  filter(Gene == "rbcL" & Predicted_Gene == "matK")
-# view(Misclassified_rbcL)
+# Define the validation data for SVM (2-mer features).
+validation_data_2mer <- dfValidation[, c("Gene", "AA", "AC", "AG", "AT", "CA", "CC", "CG", "CT", "GA", "GC", "GG", "GT", "TA", "TC", "TG", "TT")]
+validation_data_2mer$Gene <- as.factor(validation_data_2mer$Gene)
 
-# We must then add a column to indicate whether the rbcL sequence was misclassified or not using the ifelse function
-dfValidation$Misclassified <- ifelse(dfValidation$Gene == "rbcL" & dfValidation$Predicted_Gene == "matK", "Misclassified", "Classified")
+# Train an SVM model using caret with a radial kernel for 2-mer features.
+set.seed(123)  # Setting a seed for reproducibility.
+svm_2mer_caret <- train(
+  Gene ~ AA + AC + AG + AT + CA + CC + CG + CT + GA + GC + GG + GT + TA + TC + TG + TT,
+  data = train_data_2mer,
+  method = "svmRadial",  # Radial kernel for SVM.
+  trControl = trainControl(method = "cv", number = 10),  # 10-fold cross-validation.
+  preProcess = c("center", "scale")  # Standardize the data.
+)
 
-# Finally, we can create the boxplot for G proportions with the misclassified sequences labelled as points with a different colour
+# Use the trained model to predict the validation dataset (2-mer).
+svm_2mer_predictions_caret <- predict(svm_2mer_caret, validation_data_2mer)
+svm_2mer_accuracy_caret <- sum(svm_2mer_predictions_caret == validation_data_2mer$Gene) / nrow(validation_data_2mer)
+print(paste("SVM Accuracy with 2-mer (train()):", svm_2mer_accuracy_caret))
 
+
+
+
+# Ensure predictions are added to dfValidation.
+dfValidation$Predicted_Gene_1mer <- svm_1mer_predictions_caret
+
+# Create the Misclassified column.
+dfValidation$Misclassified <- ifelse(
+  dfValidation$Gene == "rbcL" & dfValidation$Predicted_Gene_1mer == "matK",
+  "Misclassified",
+  "Classified"
+)
+
+# Create a boxplot for G proportions with the misclassified sequences labeled for 1-mer predictions.
 ggplot(dfValidation, aes(x = Gene, y = Gprop)) +
   geom_boxplot(outlier.shape = NA) +
   geom_jitter(aes(color = Misclassified), width = 0.4, size = 2) +
   scale_color_manual(values = c("Classified" = "green", "Misclassified" = "red")) +
   labs(
-    title = "Boxplot of Gprop for matK and rbcL Sequences",
+    title = "Boxplot of Gprop for matK and rbcL Sequences Based on SVM Predictions (1-mer Predictions)",
     x = "Gene",
     y = "Gprop"
   ) +
   theme_minimal()
 
-# We can clearly see that our misclassified sequences share similar G proportions as other matK sequences
 
-# Returning to one the main objectives of the assignment, we wish to compare our Random Forest accuracy and SVM accuracy using the predicted data for validation and counting the correctly classified sequences
+
+
+## Model Comparison ------
+
+# Returning to one of the main objectives of the assignment, we wish to compare our Random Forest accuracy and SVM accuracy using the predicted data for validation and counting the correctly classified sequences.
+
+# Calculate Random Forest accuracy (1-mer).
 RandomForestAccuracy <- sum(predictValidation == dfValidation$Gene) / nrow(dfValidation)
-SVMAccuracy <- sum(SVM_PredictValidation == dfValidation$Gene) / nrow(dfValidation)
-print(paste("Random Forest Accuracy:", RandomForestAccuracy))
-print(paste("SVM Accuracy:", SVMAccuracy))
 
-# We can observe that using our validation dataset, Random Forest seems to have higher accuracy (0.995) than SVM (0.976)
+# Calculate Random Forest accuracy (2-mer).
+RandomForestAccuracy_2mers <- sum(predictValidation_2mers == dfValidation$Gene) / nrow(dfValidation)
 
-## Discussion and Conclusion ----
-# 
+# Calculate SVM accuracy (1-mer).
+SVMAccuracy_1mer <- sum(svm_1mer_predictions_caret == dfValidation$Gene) / nrow(dfValidation)
 
-## References ----
-# https://cran.r-project.org/web/packages/rentrez/vignettes/rentrez_tutorial.html#using-ncbis-web-history-features
-# Meyer, D. (2024). svm: Support Vector Machines (Version 1.7-16). In RDocumentation. https://www.rdocumentation.org/packages/e1071/versions/1.7-16/topics/svm
-# Ran, J.-H., Shen, T.-T., Wu, H., Gong, X., & Wang, X.-Q. (2018). Phylogeny and evolutionary history of Pinaceae updated by transcriptomic analysis. Molecular Phylogenetics and Evolution, 129, 106–116. https://doi.org/10.1016/j.ympev.2018.08.011
-# Rustam, Z., Sudarsono, E., & Sarwinda, D. (2019). Random-Forest (RF) and Support Vector Machine (SVM) Implementation for Analysis of Gene Expression Data in Chronic Kidney Disease (CKD). 9th Annual Basic Science International Conference 2019 (BASIC 2019), 546(5), 52066-. https://doi.org/10.1088/1757-899X/546/5/052066
-# Yong, W. T. L., Mustafa, A. A., Derise, M. R., & Rodrigues, K. F. (2024). DNA barcoding using chloroplast matK and rbcL regions for the identification of bamboo species in Sabah. Advances in Bamboo Science (Online), 7, 100073-. https://doi.org/10.1016/j.bamboo.2024.100073
+# Calculate SVM accuracy (2-mer).
+SVMAccuracy_2mer <- sum(svm_2mer_predictions_caret == validation_data_2mer$Gene) / nrow(validation_data_2mer)
 
-## Acknowledgements ----
-# I would like to thank Moiz Ali Syed and Thomas Tekle from the class for proposing certain sources to look at on how I could obtain my data from NCBI as I was initially struggling with it and I ended up finding useful guidance as cited in my references (rentrez tutorial by David Winter). 
-# I would also like to thank our TA, Brittany MacIntyre, for her guidance during class hours as well as office hours. She provided me with some essential pointers for my formatting.
+# Print the accuracy results for comparison.
+print(paste("Random Forest Accuracy (1-mer):", RandomForestAccuracy))
+print(paste("Random Forest Accuracy (2-mer):", RandomForestAccuracy_2mers))
+print(paste("SVM Accuracy (1-mer, caret):", SVMAccuracy_1mer))
+print(paste("SVM Accuracy (2-mer, caret):", SVMAccuracy_2mer))
+
+
+# Observations (using the validation dataset):
+# - Random Forest with 1-mer = an accuracy of 0.995 (99.5%).
+# - Random Forest with 2-mer = an accuracy of 1 (100%).
+# - SVM with 1-mer (caret) = an accuracy of 0.993 (99.29%).
+# - SVM with 2-mer (caret) = an accuracy of 0.999 (99.88%).
+
+#Random Forest with 2-mer achieved perfect classification accuracy, suggesting that including dinucleotide frequencies significantly improves performance. SVM (caret) also performed very well, with 2-mer features at 99.88%. 
+#The results indicate that Random Forest may slightly outperform SVM for this dataset when using 2-mer features.
+
